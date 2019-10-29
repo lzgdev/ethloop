@@ -1,0 +1,456 @@
+Ethernet V2.0 Configuration Testing Protocol (ECTP)
+Mark Smith, <markzzzsmith@yahoo.com.au>
+
+
+1. Introduction
+
+The Ethernet V2.0 Configuration Testing Protocol (ECTP) is an Ethernet link
+layer testing protocol. It supports:
+
+	o unicast testing - an ethernet layer "ping". This can include a
+	  strict source route - a list of stations to visit during the test.
+
+	o broadcast or multicast discovery of ECTP "loopback assistants".
+	  The discovered stations can then be used for unicast testing,
+	  either as unicast test destinations, or as part of the strict
+	  source route.
+
+ECTP is specified in Section 8, "Ethernet Configuration Testing Protocol",
+page 85 of "The Ethernet - A Local Area Network - Data Link Layer and Physical
+Layer Specifications" DEC, Intel, Xerox, Version 2.0, November 1982. ECTP is
+also known as the "Loop", "LOOP", "Loopback" protocol or "Configuration Test
+Protocol (CTP)."
+
+According to the Ethernet V2.0 specification, "All Ethernet stations must
+support the configuration testing functions."
+
+
+2. ECTP description
+
+ECTP is a simple protocol, consisting of a single packet format. ECTP packets
+are carried directly in an Ethernet frame, with an Ethernet frame type of
+0x9000.
+
+An ECTP packet contains a sequence of messages. There are two types of
+messages in the sequence:
+
+	o one or more forward messages
+
+	o a single reply message
+
+The first field of an ECTP packet is the skipcount field. Upon receipt of an
+ECTP packet, this two octet field points to the "current" message - the message
+the recipient is expected to process. The value of the skipcount field starts
+at zero, with zero representing or pointing to the first octet of the first
+message in the ECTP packet. As a ECTP packet is processed by each station,
+the skipcount field is incremented to point to the first octet of the next
+message in the ECTP packet, just before it is transmitted.
+
+The first two octets of an ECTP message specifies the message or "function"
+type - a forward message has a type value of 0x0002, while a reply message has
+a type value of 0x0001. No other message types are specified.
+
+A forward message then specifies the six octet station address (MAC address)
+the receiving station should next forward the ECTP packet to. The specified
+station address must be a unicast address.
+
+Combining the size of the message function type field with the size of the
+station address carried in a forward message results in a total forward message
+size of 8 octets. Consequently, as the ECTP packet is forwarded, the skipcount
+will increase in increments of 8, starting at zero. Therefore, a valid
+sequence of skipcount values would be 0, 8, 16, 24, corresponding to 3
+forward messages and a reply message.
+
+A reply message is intended to be processed by the station specified in the
+last forward message. The first field is a two octet receipt number, which
+can be used to identify the receiving process on the recipient, or for some
+other identification value useful to the receiver. The receipt number field is
+not modified during transmission.
+
+Following the receipt number field is an arbitrary length payload, up to the
+maximum supported Ethernet frame size. Should the size of the receipt message
+and it's payload, combined with the length of any preceeding forward messages,
+not exceed the minimum Ethernet frame size of 64 octet, Ethernet padding will
+be added to the abitrary payload when it is transmitted. As there is no ECTP
+length field, upon receipt, it is not possible to determine where the
+arbitrary payload stops and the Ethernet padding started, unless the sending
+process maintains that information independently. Otherwise, the arbitrary
+payload is not modified during transmission.
+
+The minimum compliant ECTP packet consists of a single forward message followed
+by a single reply message. Typically the forward message would specify the
+station address of the ECTP packet originator. The destination station address
+in the Ethernet header of this ECTP packet could either be a unicast,
+broadcast or multicast destination. The reserved multicast address for ECTP is
+cf:00:00:00:00:00. The arbitrary payload size for this minimal packet should
+be at least 32 octets; as mentioned before, Ethernet padding will be added to
+short frames upon transmission.
+
+Should the destination address of an ECTP packet be either the broadcast or
+the multicast address, the message type following the current message - the
+one pointed to by the skipcount field upon receipt - is prohibited from being
+anything other than a reply message. This means that a typical broadcast or
+multicast ECTP packet would consist of a single forward message, specifying
+the unicast station address of the ECTP packet originator, and a reply message.
+
+The network order for ECTP numeric fields (skipcount, message function type)
+is little endian, the opposite network order to IPv4. As the reply message
+receipt number is not processed by the ECTP protocol itself, the endianness of
+this field is arbitrary.
+
+So, in summary,
+
+	o ECTP consists of a single packet format
+
+	o ECTP packets are carried in Ethernet type 0x9000 frames
+
+	o ECTP packets contain a skipcount field and a series of messages
+
+	o the skipcount field, upon receipt, points to the current message
+	  to be processed
+
+	o immediatly prior to transmission, the skipcount field is
+	  incremented by 8, so that the next message becomes the current
+	  message upon receipt at the next station
+
+	o there are two message types - a forward message and a reply message
+
+	o ECTP packets contain one or more forward messages, and a reply
+	  message
+
+	o a forward message specifies the unicast station or MAC address the
+	  ECTP packet should next be forwarded to
+
+	o a reply message carries an receipt number, typically to identify
+	  the receiving process, and an arbitrary payload
+
+	o ECTP packets can be sent to unicast, broadcast, or the ECTP reserved
+	  cf:00:00:00:00:00 multicast address
+
+	o The message type of the next message after the current message in
+	  broadcast or multicast ECTP packets is restricted to being a reply
+	  message
+
+	o For ECTP numeric fields, the network order is little endian, the
+	  opposite to the network order of IPv4
+
+
+3. Features and details of this implementation
+
+
+3.1 Only an ECTP forwarder/responder
+
+Similar to most ICMP Echo Request/Reply ("ping") implementations, this
+implementation is only an ECTP forwarder/responder. There is no kernel sockets
+interface to the protocol - user space programs will have send or receive the
+ECTP packets using PF_PACKET sockets.
+
+
+3.2 Varied delay responses to broadcast or multicast ECTP packets
+
+When a group of stations receive a broadcast or multicast ECTP packet, should
+they all reply immediately, there is possibility that some of the unicast
+responses could get lost. This loss could occur either due to congestion
+occuring on the Ethernet segment, or due to the receiving station being
+overwhelmed by the volume of responses and consequently ignoring some of them.
+
+To mitigate this problem, this implementation delays it's responses to
+broadcast or multicast ECTP packets.
+
+The delay length is made up of a sum of two time periods:
+
+	o a minimum fixed number of milliseconds
+
+	o a random number of milliseconds
+
+The minimum fixed number of millisecond delay tries to ensure that this
+implementation's responses do not collide with responses from other
+implementations that don't delay their responses.
+
+The random number of milliseconds delay component then tries to ensure that
+responses from this implementation do not collide.
+
+In networking terms, varying delays between packet arrival times is known as
+"jitter".
+
+The default fixed number of milliseconds is 10, while the default random
+number of millisecond delay ranges from 0 to 63 milliseconds.
+
+The fixed delay milliseconds parameter can be changed via the
+
+	net.ectp.bmc_jitter_min_msecs
+
+sysctl, or the
+
+	/proc/sys/net/ectp/bmc_jitter_min_msecs
+
+file. The range of acceptable values is 0 through 1000 milliseconds.
+
+The random delay parameter is specified as a bitmask length that is applied
+to a random number. This parameter can be changed via the
+
+	net.ectp.bmc_jitter_randmask_len
+
+sysctl, or the
+
+	/proc/sys/net/ectp/bmc_jitter_randmask_len
+
+file. The range of acceptable values for the bitmask length is 0 through 10.
+The default value is 6 bits, resulting in the default random delay range of
+0 through 63 milliseconds. The maximum value of 10 would result in a random
+delay range of 0 through to 1023 milliseconds.
+
+Due to delaying respones, there could be a number of outstanding responses
+pending. These pending responses are queued. Once the queue is full, any new
+incoming broadcast or multicast ECTP packets are ignored.
+
+The default depth of the queue is 10 delayed responses. This parameter can be
+changed via the
+
+	net.ectp.bmc_rply_q_maxlen
+
+sysctl, or the
+
+	/proc/sys/net/ectp/bmc_rply_q_maxlen
+
+file. The range of acceptable values for the reply queue depth is 0 through 30.
+
+
+3.3 Ignore broadcast and multicast ECTP Packets
+
+By default, this implementation responds to broadcast and multicast (bmc) ECTP
+packets. This can be disabled by setting the
+
+	net.ectp.bmc_ignore
+
+sysctl, or the
+
+	/proc/sys/net/ectp/bmc_ignore
+
+file to 1. To enable responding to broadcast and multicast ECTP packets, set
+the value to 0.
+
+
+3.4 Ignore unicast ECTP packets
+
+By default, this implementation reponds to unicast ECTP packets. This can be
+disabled by setting the
+
+	net.ectp.uc_ignore
+
+sysctl, or the
+
+	/proc/sys/net/ectp/uc_ignore
+
+file to 1. To enable responding to unicast ECTP packets, set the value to 0.
+
+
+3.5 Set responses to unicast ECTP packets to TC_PRIO_CONTROL
+
+Responses to unicast ECTP packets are set to TC_PRIO_BESTEFFORT by default.
+Should the outbound interface be transmitting a large amount of traffic, this
+could result in them getting significantly delayed behind other traffic, or
+possibly even dropped from the outbound interface queue. Setting their
+priority to TC_PRIO_CONTROL will help prevent this, as it identifies these
+responses as control rather than best effort traffic, although how
+TC_PRIO_BESTEFFORT and TC_PRIO_CONTROL marked traffic is handled does depend
+on the packet scheduler assigned to the outbound interface. Setting the
+priority to TC_PRIO_CONTROL may be useful if ECTP is being used to monitor
+availability.
+
+To change the unicast response priority from TC_PRIO_BESTEFFORT to
+TC_PRIO_CONTROL, change the
+
+	net.ectp.uc_rply_prio_ctrl
+
+sysctl, or the
+
+	/proc/sys/net/ectp/uc_rply_prio_ctrl
+
+file to 1. To switch back to TC_PRIO_BESTEFFORT, set the value to 0.
+
+
+4. Security
+
+ECTP was designed in the early 1980s, when protocol security was less of
+a concern than it is now. Consequently, there are some features of the
+protocol which could be abused for nefarious purposes. By default, this
+implementation attempts to avoid participating in them. These features
+could be useful for some test cases thought, so they can be enabled if
+required.
+
+
+4.1 Traffic amplification
+
+An ECTP packet could be sent to either the broadcast or multicast address,
+with a forwarding address that doesn't match the ECTP packet source. Should
+the receiving ECTP implementations respond to this broadcast or multicast ECTP
+packet immediately, the station at the specified forward address would suffer
+from a large influx of unexpected unicast ECTP packets. Alternatively, if the
+specified forward address does not exist, in an Ethernet switched environment,
+all the ECTP responses would be flooded to all ports on the switch, excepting
+the port the ECTP response arrived on.
+
+By default, this implementation will not respond to ECTP broadcast,
+multicast or unicast packets that specify a forward address that doesn't
+match the ECTP packet's source MAC address. This prevents this implementation
+participating in a traffic amplification attack.
+
+The net.ectp.src_rt_max_fwdmsgs sysctl, described below, can be used to
+change this behaviour.
+
+
+4.2 Non-local source route loops
+
+The source route capability of ECTP can be exploited to create a traffic based
+denial of service attack, involving two or more remote stations.
+
+In the simplest scenario, the attacking station, station A, creates an ECTP
+packet containing a large number of forward messages. The forward messages
+specify alternating station B and station C addresses, with station B and
+C being both unwilling participants and victims. Station A then sends the
+packet to B. B will send the packet to C, which will then send it back to B,
+which then sends it back to C, and so on. This looping will continue as fast
+as B and C can process the received ECTP packets, until the sequence of
+forward messages in the ECTP packet is exhausted. With the common Ethernet
+default MTU of 1500 octets, and a forwarding message size of 8 octet, a
+source route could contain a loop with 187 hops. Non-standard 9000 octet MTU
+Ethernet frames could contain a source route with 1124 hops.
+
+More complicated exploits would involve specifying more than 2 remote
+stations to participate in the loop, and rapidly sending a number of ECTP
+packets with looped source routes, such that multiple concurrent
+forwarding loops occur.
+
+To avoid participating in source route forwarding loops, this implementation,
+by default, will only process ECTP packets with a single forward message.
+ECTP packets with more than one forward message will be silently dropped.
+
+The net.ectp.src_rt_max_fwdmsgs sysctl, described below, can be used allow
+this implementation to participate in source routes that consist of more than
+one forward message, should that be required for testing purposes.
+
+
+4.3 net.ectp.src_rt_max_fwdmsgs sysctl
+
+The net.ectp.src_rt_max_fwdmsgs sysctl is used to control source
+address validation of single forward message ECTP packets, described
+previously in 4.1, and to specify the maximum number of forward messages
+in a source route that this implementation will process, described in 4.2.
+
+The default value of 0 specifies that only single forward message ECTP
+packets will be processed, and will only be further forwarded if the forward
+address matches the original ECTP packet's source.
+
+Values greater than 0 specify the maximum number of forward messages
+that this implementation will process, with a maximum value of 1000. It is
+important to realise that this implementation does not count the number
+of forward messages in the received packet to determine if it should forward
+the packet futher. Instead, it uses the skipcount field's current value
+to determine if current forward message is one which exceeds the current
+net.ectp.src_rt_max_fwdmsgs value.
+
+The /proc file corresponding to the net.ectp.src_rt_max_fwdmsgs sysctl is
+
+	/proc/sys/net/ectp/net.ectp.src_rt_max_fwdmsgs
+
+
+5. ectpping utility
+
+A user space ECTP testing utility, similar to the IP "ping" utilty, is
+available at:
+
+	http://ectpping.berlios.de
+
+The "-h" option will display the command line options available.
+
+
+6. ECTP references
+
+
+6.1 "The Ethernet - A Local Area Network - Data Link Layer and Physical Layer
+    Specifications", Version 2.0, November 1982, (DEC, Intel, Xerox),
+    (Digital Equipment Corp Part# AA-K759B-TK).
+
+Available at (as of January 2008):
+
+	A Xerox version - (around 7MB)
+	http://bitsavers.org/pdf/xerox/ethernet/Ethernet_Rev2.0_N...
+
+	A DEC version - (warning - around 33MB!)
+	http://vt100.net/mirror/antonio/aa-k759b-tk.pdf
+
+
+6.2 "DECnet Maintenance Operations Functional Specification", Version 3.0.0,
+    September 1983, Appendix E, "ETHERNET LOOP TESTING"
+
+This is different text to the Ethernet V2.0 specification above.
+
+Available at (as of February 2008):
+
+	http://linux-decnet.sourceforge.net/docs/maintop30.txt
+
+
+6.3 Ethernet configuration testing protocol (CTP)
+
+A page describing how John Hawkinson found details details of the protocol. He
+has scanned the ECTP protocol pages of the Ethernet V2.0 spec, providing a
+PDF. This was the first source of ECTP protocol information I used.
+
+Available at (as of February 2009):
+
+	http://www.mit.edu/people/jhawk/ctp.html
+
+The direct link to the PDF is:
+
+	http://www.mit.edu/people/jhawk/ctp.pdf
+
+
+7. Other ECTP related information
+
+
+7.1 Wireshark support
+
+Wireshark can decode it. Details and a sample capture are at (as of February
+2009):
+
+	http://wiki.wireshark.org/Loop
+
+
+7.2 "Monitoring Ethernet Connectivity"
+
+A HP Labs paper describing how ECTP was used for ethernet testing and
+monitoring at Carnegie Mellon University in the mid-80s, titled
+"Monitoring Ethernet Connectivity", report HPL-2003-160, is available at
+(as of February 2009):
+
+	http://www.hpl.hp.com/techreports/2003/HPL-2003-160.html
+
+
+8. Acknowledgements and references
+
+o John Hawkinson for originally finding and putting a copy of the ECTP spec
+online.
+
+o Rusty Russell's "Unreliable Guide To Locking". Table 5.1, "Table
+  of Minimum Requirements" is very useful for working out what type
+  of spinlock to use when softirqs, kernel timers and notifiers can
+  occur concurrently. Available at:
+
+	http://www.kernel.org/pub/linux/kernel/people/rusty/\
+	kernel-locking/index.html
+
+o "Understanding Linux Network Internals", by Christian Benvenuti.
+  Copyright 2006 O'Reilly Media, Inc., ISBN: 0-596-00255-6
+
+o "Linux Device Drivers", 2nd Edition, by Allesandro Rubini and Jonathan
+  Corbet.
+  Copyright 2001, 1998 O'Reilly and Associates, Inc., ISBN: 0-596-00008-1
+
+o The various authors of the Linux subsystems and networking protocols.
+
+o "Network Algorithmics", by George Varghese, Copyright 2005, Elsevier,
+  ISBN-13: 978-0-12-088477-3, ISBN-10: 0-12-088477-1
+
+o Donald Robinson Smith, my Father.
+

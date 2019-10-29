@@ -1,0 +1,34 @@
+#
+# Ethernet V2.0 Configuration Testing Protocol
+#
+
+config ECTP
+	tristate "Ethernet V2.0 Configuration Testing Protocol"
+	depends on NET && NET_ETHERNET
+	---help---
+	  The Ethernet V2.0 Configuration Testing Protocol (ECTP) is an
+	  Ethernet link layer testing protocol. It supports:
+
+	  o unicast testing - an ethernet layer "ping". This can include a
+	    strict source route - a list of stations to visit during the test.
+
+	  o broadcast or multicast discovery of ECTP "loopback assistants".
+	    The discovered stations can then be used for unicast testing,
+	    either as unicast test destinations, or as part of the strict
+	    source route.
+
+	  "The Ethernet", Version 2.0 (1982) specification states that
+	  "All Ethernet stations must support the configuration testing
+	  functions." (Section 8, page 85)
+
+	  An overview of the protocol, features of this implementation and
+	  a number of references, including URLs for the Ethernet V2.0
+	  specification, are provided in the file
+
+		<linux src>/Documentation/networking/ectp.txt
+
+	  A proof of concept testing utility, "ectpping", is available at:
+
+		<http://ectpping.berlios.de>
+
+	  The name of the kernel module is "ectp".
